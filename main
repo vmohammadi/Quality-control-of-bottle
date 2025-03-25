@@ -1,0 +1,294 @@
+#include <iostream>  
+#include <opencv2/opencv.hpp>  
+#include <filesystem>
+
+namespace fs = std::filesystem;
+using namespace std;
+using namespace cv;
+
+
+// Function to apply gamma correction  
+Mat gammaCorrection(const Mat& src, double gamma) {
+    Mat dst = src.clone();
+    Mat lookUpTable(1, 256, CV_8U);
+    uchar* p = lookUpTable.ptr();
+    for (int i = 0; i < 256; ++i)
+        p[i] = saturate_cast<uchar>(pow(i / 255.0, gamma) * 255.0);
+
+    LUT(src, lookUpTable, dst);
+    return dst;
+}
+
+
+
+int main() {
+    
+    //   *** . ***      Variables and definitions       *** . ***
+
+    string image_path = "D:\\Cofre\\CV\\Experience_Ancien\\proj_dimension_bouteile\\opcv_cpp\\images";
+    string window_name = "Original Image with Control Results";
+    int target_width = 360; // Define size of target window
+    int target_height = 640;
+    Mat gray_image;
+    Mat blurred;
+    Mat edges;
+    float Width;
+
+    // Define the position where the text will be drawn  
+    Point text_origin(70, 1100); // Bottom-left corner of the text 
+    Point OK(280, 100); // Bottom-left corner of the text 
+    Point NOK(270, 100); // Bottom-left corner of the text 
+    // Define the font properties  
+    int font_face = FONT_HERSHEY_DUPLEX;
+    double font_scale = 1.0;
+    double font_scale_juge = 3.0;
+    Scalar text_blackcolor(0, 0, 0); // Red color (BGR format)  
+    Scalar text_redcolor(0, 0, 160); // Red color (BGR format)  
+    Scalar text_greencolor(80, 140, 60); // Green color (BGR format)  
+    int thickness = 2;
+    int line_type = LINE_AA; // Anti-aliased line for smoother text  
+
+    Mat hsv_image; // Convert the image to HSV 
+    Mat yellow_mask; // Create a mask for the yellow color 
+    float cap_length;
+
+    namedWindow(window_name, WINDOW_NORMAL); // Create a window  
+    resizeWindow(window_name, target_width, target_height); // Set the window size  
+
+    if (!fs::exists(image_path) || !fs::is_directory(image_path)) {
+        cerr << "Error: Directory not found or is not a directory: " << image_path << endl;
+        return -1;
+    }
+
+    vector<string> image_files;
+    for (const auto& entry : fs::directory_iterator(image_path)) { // iterates through the contents of the directory
+        if (fs::is_regular_file(entry)) {
+            string filename = entry.path().string();
+            string extension = filename.substr(filename.find_last_of(".") + 1);
+            // Convert extension to lowercase for comparison  
+            transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+            if (extension == "jpg" || extension == "jpeg" || extension == "png" || extension == "bmp" || extension == "tiff" || extension == "tif") {
+                image_files.push_back(filename);
+            }
+        }
+    }
+
+    if (image_files.empty()) {
+        cerr << "Error: No image files found in directory: " << image_path << endl;
+        return -1;
+    }
+
+    // Reading and processing -----
+
+    for (const auto& file : image_files) {
+        Mat image = imread(file);
+
+        // Define the control zone (middle of bottle)
+        int roi_start_x = 150;
+        int roi_end_x = 700;
+
+        //   *** . ***      Check the bottle width       *** . ***
+
+        cvtColor(image, gray_image, COLOR_BGR2GRAY);
+
+        Rect roi(150, 450, 550, 50);
+        Mat iml = gray_image(roi);
+        // Apply Gaussian blur to reduce noise  
+        GaussianBlur(gray_image, blurred, Size(5, 5), 0);
+
+        // Edge detection using Canny  
+        Canny(blurred, edges, 50, 150); // Adjust thresholds as needed  
+
+        // Find the leftmost and rightmost edge points  
+        int left_edge_x = -1;
+        int right_edge_x = -1;
+
+        // Define the marker type (STAR)  
+        int marker_type = MARKER_CROSS;
+        int marker_size = 35;
+        int marker_thickness = 2;
+        Scalar star_color(0, 0, 0);
+
+        int marker_type2 = MARKER_SQUARE;
+        int marker_size2 = 8;
+        int marker_thickness2 = 3;
+        Scalar star_color2(0, 0, 255);
+
+        // Search for the leftmost edge in the ROI  
+        for (int x = roi_start_x; x < roi_end_x; ++x) {
+            for (int y = 450; y < 500; ++y) {
+                if (edges.at<uchar>(y, x) > 0) {
+                    left_edge_x = x;
+                    goto found_left;
+                }
+            }
+        }
+
+        found_left:
+        if (left_edge_x != -1) {
+            cout << "Left edge found at x = " << left_edge_x << endl;
+            // Draw the star on the image  
+            drawMarker(image, Point(left_edge_x, 450), star_color, marker_type, marker_size, marker_thickness, LINE_AA);
+            drawMarker(image, Point(left_edge_x, 450), star_color2, marker_type2, marker_size2, marker_thickness2, LINE_AA);
+        }
+        else {
+            cout << "Left edge not found in ROI." << endl;
+        }
+
+        // Search for the rightmost edge in the ROI  
+        for (int x = roi_end_x - 1; x >= roi_start_x; --x) {
+            for (int y = 450; y < 500; ++y) {
+                if (edges.at<uchar>(y, x) > 0) {
+                    right_edge_x = x;
+                    goto found_right;
+                }
+            }
+        }
+
+        found_right:
+        if (right_edge_x != -1) {
+            cout << "Right edge found at x = " << right_edge_x << endl;
+            // Draw the star on the image  
+            drawMarker(image, Point(right_edge_x, 450), star_color, marker_type, marker_size, marker_thickness, LINE_AA);
+            drawMarker(image, Point(right_edge_x, 450), star_color2, marker_type2, marker_size2, marker_thickness2, LINE_AA);
+        }
+        else {
+            cout << "Right edge not found in ROI." << endl;
+        }
+
+        Width = right_edge_x - left_edge_x;
+        Width = Width * 0.196; // 1 pix = 0.235 mm
+        
+        string width_text = "Width: " + to_string(Width); // Convert the width to a string 
+
+        // Put the text on the image  
+        putText(image, width_text, text_origin, font_face, font_scale, text_blackcolor, thickness, line_type);
+
+        // *** . ***       Check the bottle cap        *** . ***
+
+        cvtColor(image, hsv_image, COLOR_BGR2HSV);
+
+        // Define the range of yellow color in HSV  
+        Scalar lower_yellow(20, 100, 80);   // Lower bound for yellow (H, S, V)  
+        Scalar upper_yellow(30, 255, 255);   // Upper bound for yellow (H, S, V)  
+ 
+        inRange(hsv_image, lower_yellow, upper_yellow, yellow_mask);
+ 
+        vector<vector<Point>> contours; // Find contours of the yellow object 
+        vector<Vec4i> hierarchy;
+        findContours(yellow_mask, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+        // Find the largest contour (assuming the yellow object is the largest)  
+        if (contours.empty()) {
+            cerr << "Error: No yellow object found." << endl;
+            return -1;
+        }
+
+        int largest_contour_index = 0;
+        double largest_area = 0;
+        for (int i = 0; i < contours.size(); i++) {
+            double area = contourArea(contours[i]);
+            if (area > largest_area) {
+                largest_area = area;
+                largest_contour_index = i;
+            }
+        }
+
+        // Create a bounding box around the largest contour  
+        Rect bounding_box = boundingRect(contours[largest_contour_index]);
+
+        // Draw the bounding box on the original image  
+        rectangle(image, bounding_box.tl(), bounding_box.br(), Scalar(230, 30, 40), 2); // Green box  
+
+        // Calculate the length and width of the bounding box  
+        int box_width = bounding_box.width;
+        int box_height = bounding_box.height;
+
+        cap_length = box_width * 0.235; // 1 pix = 0.235 mm 
+        string cap_length_txt = "cap length: " + to_string(cap_length);
+ 
+        Point cap_text_origin(70, 1050); // Bottom-left corner of the text 
+
+        // Put the text on the image  
+        putText(image, cap_length_txt, cap_text_origin, font_face, font_scale, text_blackcolor, thickness, line_type);
+
+        // *** . ***       Check cracks        *** . ***
+
+        Rect roi2(260, 430, 210, 180);
+        Mat roi_ctrl = gray_image(roi2);
+
+        // Apply Gamma Correction  
+        double gamma = 0.8; // Lower values increase contrast.  
+        Mat gamma_corrected_image = gammaCorrection(roi_ctrl, gamma);
+        
+        // Apply thresholding
+        Mat thresholded_image;
+        int lower_threshold = 20; // Define the lower and upper threshold limits
+        int upper_threshold = 90;
+
+        // Create a mask for pixels within the range  
+        Mat mask;
+        inRange(gamma_corrected_image, lower_threshold, upper_threshold, mask);
+
+        // Apply the mask to isolate the pixels within the range  
+        bitwise_and(gamma_corrected_image, gamma_corrected_image, thresholded_image, mask);
+
+        // Find Contours (to locate the black spot)  
+        vector<vector<Point>> contours2;
+        vector<Vec4i> hierarchy2;
+        findContours(thresholded_image, contours2, hierarchy2, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE); // Only look for external contours  
+
+        // Find the contour that corresponds to the black spots/cracks 
+        // Find the largest contour.  
+        int spot_contour_index = -1;
+        double max_area = 0;
+
+        for (int i = 0; i < contours2.size(); i++) {
+            double area = contourArea(contours2[i]);
+            if (area > max_area) {
+                max_area = area;
+                spot_contour_index = i;
+            }
+        }
+
+        // Extract Coordinates and Draw a Blue Square  
+        if (spot_contour_index >= 0) {
+            Rect bounding_box = boundingRect(contours2[spot_contour_index]); // Get the bounding rectangle for the spot  
+            Point topleft = bounding_box.tl();  // top left point  
+            Point bottomright = bounding_box.br(); // bottom right point  
+
+            // Apply the offsets to the top-left and bottom-right points because we already cropped the image 
+            Point new_topleft = topleft + Point(250, 420);
+            Point new_bottomright = bottomright + Point(270, 440);
+
+            // Draw a Blue rectangle around the adjusted bounding box  
+            rectangle(image, new_topleft, new_bottomright, Scalar(230, 30, 40), 4);  
+
+        }
+        else {
+            cout << "No suitable black spot contour found." << endl;
+        }
+
+        //    *** . ***         Judgement          *** . ***
+
+        if (contours2.size() == 0) {
+            if (Width >= 48 && Width <= 51) {
+                putText(image, "OK", OK, font_face, font_scale_juge, text_greencolor, 5, line_type);
+                cout << Width;
+            }
+            else {
+                putText(image, "NOK", NOK, font_face, font_scale_juge, text_redcolor, 5, line_type);
+            }
+        }
+        else {
+            putText(image, "NOK", NOK, font_face, font_scale_juge, text_redcolor, 5, line_type);
+        }
+        
+        imshow(window_name, image);
+        waitKey(2500); // Wait 2.5 second  
+    }
+
+    destroyAllWindows(); // Close all windows  
+    return 0;
+}
